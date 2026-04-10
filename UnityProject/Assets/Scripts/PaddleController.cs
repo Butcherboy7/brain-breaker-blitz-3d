@@ -1,29 +1,38 @@
 using UnityEngine;
 
 /// <summary>
-/// Paddle controller - uses direct KeyCode input (no Input Manager dependency),
-/// clamps correctly to wall inner edges accounting for paddle half-width.
+/// Smooth paddle controller.
+/// - Input read in Update() every frame (holding keys works perfectly)
+/// - Movement applied via rb.MovePosition() in FixedUpdate (proper physics)
+/// - Lerp smoothing gives buttery, responsive feel
+/// - Clamps to wall inner edges accounting for paddle half-width
 /// </summary>
 [RequireComponent(typeof(Rigidbody))]
 [RequireComponent(typeof(BoxCollider))]
 public class PaddleController : MonoBehaviour
 {
-    // Must match LevelManager.WALL_X = 8.5
-    const float WALL_INNER = 8.5f;
+    const float WALL_INNER = 8.5f; // must match LevelManager
 
-    public float speed        = 18f;
+    [Header("Movement")]
+    public float speed        = 22f;   // world units per second
+    public float smoothing    = 12f;   // higher = snappier, lower = more floaty
     public float currentWidth = 3.2f;
 
     private Rigidbody rb;
+    private float targetX;     // updated every Update frame
+    private float currentX;    // smoothly chased toward targetX
 
+    // ─────────────────────────────────────────────────────────
     void Awake()
     {
+        Application.targetFrameRate = 60;
+        Time.fixedDeltaTime         = 1f / 60f;
+
         rb = GetComponent<Rigidbody>();
         rb.useGravity    = false;
         rb.isKinematic   = true;
-        rb.interpolation = RigidbodyInterpolation.Interpolate;
+        rb.interpolation = RigidbodyInterpolation.Interpolate; // visual smoothness
 
-        // Bouncy physics material
         var pm = new PhysicMaterial("PaddlePM")
         {
             bounciness      = 1f,
@@ -34,50 +43,67 @@ public class PaddleController : MonoBehaviour
         };
         GetComponent<BoxCollider>().material = pm;
 
-        ApplyGlowMaterial();
+        ApplyGlow();
+        targetX  = transform.position.x;
+        currentX = transform.position.x;
     }
 
-    void ApplyGlowMaterial()
+    void ApplyGlow()
     {
         var mat = new Material(Shader.Find("Standard"));
         mat.color = new Color(0f, 1f, 0.6f);
         mat.EnableKeyword("_EMISSION");
-        mat.SetColor("_EmissionColor", new Color(0f, 1f, 0.6f) * 2f);
+        mat.SetColor("_EmissionColor", new Color(0f, 1f, 0.6f) * 2.5f);
         GetComponent<MeshRenderer>().material = mat;
     }
 
+    // ─────────────────────────────────────────────────────────
+    // Update: read input EVERY frame (ensures holding keys works)
     void Update()
     {
-        // ── Detect input directly from keys – no Input Manager required ──
         float h = 0f;
-
-        // Arrow keys
         if (Input.GetKey(KeyCode.LeftArrow)  || Input.GetKey(KeyCode.A)) h = -1f;
         if (Input.GetKey(KeyCode.RightArrow) || Input.GetKey(KeyCode.D)) h =  1f;
+        // Analogue gamepad / keyboard axis combo
+        float axis = Input.GetAxisRaw("Horizontal");
+        if (h == 0f && Mathf.Abs(axis) > 0.1f) h = Mathf.Sign(axis);
 
-        // Also support GetAxis as fallback (joystick / other input)
-        if (h == 0f) h = Input.GetAxisRaw("Horizontal");
-
-        if (h == 0f) return; // nothing pressed
-
-        Vector3 pos = transform.position;
         float halfW = currentWidth * 0.5f;
-        float maxX  = WALL_INNER - halfW - 0.05f; // tiny margin so paddle never overlaps wall
+        float maxX  = WALL_INNER - halfW - 0.05f;
 
-        pos.x = Mathf.Clamp(pos.x + h * speed * Time.deltaTime, -maxX, maxX);
-        transform.position = pos;
+        // Accumulate desired position
+        targetX += h * speed * Time.deltaTime;
+        targetX  = Mathf.Clamp(targetX, -maxX, maxX);
     }
 
+    // ─────────────────────────────────────────────────────────
+    // FixedUpdate: smooth chase + physics move (looks silky smooth)
+    void FixedUpdate()
+    {
+        // Smoothly interpolate currentX toward targetX
+        currentX = Mathf.Lerp(currentX, targetX, smoothing * Time.fixedDeltaTime);
+
+        Vector3 newPos = transform.position;
+        newPos.x = currentX;
+        rb.MovePosition(newPos);  // proper kinematic move — collision-aware
+    }
+
+    // ─────────────────────────────────────────────────────────
     public void SetWidth(float w)
     {
         currentWidth = w;
-        Vector3 s = transform.localScale;
+        var s = transform.localScale;
         s.x = w;
         transform.localScale = s;
+        // Re-clamp targetX with new width
+        float maxX = WALL_INNER - (w * 0.5f) - 0.05f;
+        targetX = Mathf.Clamp(targetX, -maxX, maxX);
     }
 
     public void ResetPaddle()
     {
         transform.position = new Vector3(0f, -4.5f, 0f);
+        targetX  = 0f;
+        currentX = 0f;
     }
 }
