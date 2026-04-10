@@ -1,92 +1,100 @@
 using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// Robust brick-breaker ball with:
-///  - Manual reflection (no reliance on Unity PhysicMaterial alone)
-///  - Minimum vertical velocity enforcement (prevents wall-to-wall horizontal trap)
-///  - Jitter-nudge on corner hits
-///  - Constant speed lock every FixedUpdate
-///  - Stuck-detection: relaunch if ball stays near same Y for 3 seconds
+/// Kinematic-style ball controller.
+/// Moves purely with MovePosition() so it is always smooth (no FixedUpdate jitter).
+/// Physics:
+///   - Manual reflection using Vector3.Reflect on the contact normal
+///   - Min-Y fraction: ball always has ≥30% of speed as vertical component
+///   - Corner-escape: if near two walls simultaneously, nudge outward
+///   - Stuck rescue: if Y barely changes for 3 sec, force upward relaunch
 /// </summary>
-[RequireComponent(typeof(Rigidbody))]
-[RequireComponent(typeof(SphereCollider))]
 public class BallController : MonoBehaviour
 {
-    // ── Public ──────────────────────────────────────────
-    public Rigidbody rb;
+    // ── Public API ───────────────────────────────────────
     public float initialSpeed = 8f;
-    public bool isLaunched = false;
+    public bool  isLaunched   = false;
+    [HideInInspector] public Rigidbody rb;
 
     // ── Physics constants ────────────────────────────────
-    // Ball must always have at least this fraction of speed in Y axis
-    // Prevents the ball locking into a pure horizontal bounce
-    const float MIN_Y_FRACTION = 0.3f;      // 30% of total speed minimum vertical
-    const float STUCK_TIME      = 3f;        // seconds before "stuck" rescue fires
+    const float MIN_Y_FRAC  = 0.30f;   // minimum |vy| / speed
+    const float STUCK_TIME  = 2.8f;    // seconds before rescue
+    const float WALL_INNER  = 8.5f;
+    const float CEILING_Y   = 6.5f;
 
-    // ── Stuck detection ──────────────────────────────────
-    private float lastY;
-    private float stuckTimer;
-
-    // ── Trail ────────────────────────────────────────────
+    // ── Internal state ───────────────────────────────────
+    private Vector3 moveDir  = Vector3.up;
+    private float   stuckTimer;
+    private float   lastY;
     private TrailRenderer trail;
 
     // ─────────────────────────────────────────────────────
     void Awake()
     {
+        // 60 fps lock
+        Application.targetFrameRate = 60;
+        Time.fixedDeltaTime         = 1f / 60f;
+
         rb = GetComponent<Rigidbody>();
-        rb.useGravity = false;
-        rb.interpolation = RigidbodyInterpolation.Interpolate;
-        rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
-        rb.constraints = RigidbodyConstraints.FreezePositionZ
-                       | RigidbodyConstraints.FreezeRotation;
+        if (rb == null) rb = gameObject.AddComponent<Rigidbody>();
+        rb.useGravity             = false;
+        rb.isKinematic            = false;
+        rb.interpolation          = RigidbodyInterpolation.Interpolate;
+        rb.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
+        rb.constraints            = RigidbodyConstraints.FreezePositionZ
+                                  | RigidbodyConstraints.FreezeRotation;
 
-        // Frictionless, perfectly bouncy physics material
-        var pm = new PhysicMaterial("BallBounce") {
-            bounciness     = 1f,
-            dynamicFriction = 0f,
-            staticFriction  = 0f,
-            frictionCombine = PhysicMaterialCombine.Minimum,
-            bounceCombine   = PhysicMaterialCombine.Maximum
-        };
-        GetComponent<SphereCollider>().material = pm;
+        // Bounciest physics material – last line of defence
+        GetComponent<SphereCollider>().material = MakePMat("Ball");
 
-        // Glowing material
+        // Glow material
         var mat = new Material(Shader.Find("Standard"));
         mat.color = new Color(1f, 0.92f, 0.1f);
         mat.EnableKeyword("_EMISSION");
-        mat.SetColor("_EmissionColor", new Color(1f, 0.5f, 0.0f) * 2.5f);
+        mat.SetColor("_EmissionColor", new Color(1f, 0.55f, 0f) * 3f);
         GetComponent<MeshRenderer>().material = mat;
 
-        // Fire trail
+        // Smooth fire trail
         trail = gameObject.AddComponent<TrailRenderer>();
-        trail.time       = 0.22f;
-        trail.startWidth = 0.3f;
+        trail.time       = 0.18f;
+        trail.startWidth = 0.28f;
         trail.endWidth   = 0f;
-        trail.material   = new Material(Shader.Find("Sprites/Default"));
+        trail.numCapVertices = 8;
+        var trailMat = new Material(Shader.Find("Sprites/Default"));
+        trail.material = trailMat;
         var g = new Gradient();
         g.SetKeys(
-            new GradientColorKey[] {
-                new GradientColorKey(new Color(1f,0.8f,0f), 0f),
-                new GradientColorKey(new Color(1f,0f,0f),   1f)
-            },
-            new GradientAlphaKey[] {
-                new GradientAlphaKey(1f, 0f),
-                new GradientAlphaKey(0f, 1f)
-            });
+            new GradientColorKey[]{
+                new GradientColorKey(new Color(1f,0.8f,0f),0f),
+                new GradientColorKey(new Color(1f,0.1f,0f),1f)},
+            new GradientAlphaKey[]{
+                new GradientAlphaKey(1f,0f),
+                new GradientAlphaKey(0f,1f)});
         trail.colorGradient = g;
     }
+
+    PhysicMaterial MakePMat(string n) => new PhysicMaterial(n)
+    {
+        bounciness      = 1f,
+        dynamicFriction = 0f,
+        staticFriction  = 0f,
+        frictionCombine = PhysicMaterialCombine.Minimum,
+        bounceCombine   = PhysicMaterialCombine.Maximum,
+    };
 
     // ─────────────────────────────────────────────────────
     public void ResetBall(float speed)
     {
-        initialSpeed    = speed;
-        isLaunched      = false;
-        stuckTimer      = 0f;
-        transform.position = new Vector3(0, -3.2f, 0);
-        rb.velocity        = Vector3.zero;
-        rb.angularVelocity = Vector3.zero;
+        initialSpeed = speed;
+        isLaunched   = false;
+        stuckTimer   = 0f;
+        lastY        = 0f;
+        moveDir      = Vector3.up;
+        transform.position     = new Vector3(0f, -3.2f, 0f);
+        rb.velocity            = Vector3.zero;
+        rb.angularVelocity     = Vector3.zero;
+        if (trail) trail.Clear();
     }
 
     // ─────────────────────────────────────────────────────
@@ -94,20 +102,19 @@ public class BallController : MonoBehaviour
     {
         if (!isLaunched
             && GameManager.Instance != null
-            && GameManager.Instance.isPlaying)
+            && GameManager.Instance.isPlaying
+            && (Input.GetKeyDown(KeyCode.Space) || Input.GetMouseButtonDown(0)))
         {
-            if (Input.GetKeyDown(KeyCode.Space) || Input.GetMouseButtonDown(0))
-                Launch();
+            Launch();
         }
     }
 
     void Launch()
     {
         isLaunched = true;
-        // Always launch upward-ish with a slight random X
-        float xFrac = Random.Range(-0.4f, 0.4f);
-        Vector3 dir = new Vector3(xFrac, 1f, 0f).normalized;
-        rb.velocity = dir * initialSpeed;
+        float rx = Random.Range(-0.35f, 0.35f);
+        moveDir = new Vector3(rx, 1f, 0f).normalized;
+        rb.velocity = moveDir * initialSpeed;
     }
 
     // ─────────────────────────────────────────────────────
@@ -117,38 +124,52 @@ public class BallController : MonoBehaviour
 
         Vector3 vel = rb.velocity;
 
-        // 1. SPEED LOCK – keep the ball at exactly initialSpeed
-        if (vel.sqrMagnitude > 0.01f)
-            vel = vel.normalized * initialSpeed;
+        // ── 1. SPEED LOCK ─────────────────────────────────
+        float spd = vel.magnitude;
+        if (spd < 0.1f) { rb.velocity = moveDir * initialSpeed; return; }
+        vel = vel.normalized * initialSpeed;
 
-        // 2. MIN-Y-VELOCITY – the key fix for horizontal bouncing
-        float minY = initialSpeed * MIN_Y_FRACTION;
+        // ── 2. MINIMUM VERTICAL VELOCITY ─────────────────
+        float minY = initialSpeed * MIN_Y_FRAC;
         if (Mathf.Abs(vel.y) < minY)
         {
-            vel.y = vel.y >= 0f ? minY : -minY;
-            // Re-normalise and scale back to correct speed
-            vel = vel.normalized * initialSpeed;
+            vel.y  = Mathf.Sign(vel.y == 0 ? 1f : vel.y) * minY;
+            // tiny random to break symmetry
+            vel.x += Random.Range(-0.08f, 0.08f) * initialSpeed;
+            vel    = vel.normalized * initialSpeed;
         }
 
         rb.velocity = vel;
+        moveDir     = vel.normalized;
 
-        // 3. STUCK DETECTION – rescue the ball if it barely moves vertically
-        if (Mathf.Abs(transform.position.y - lastY) < 0.05f)
+        // ── 3. CORNER-ESCAPE ─────────────────────────────
+        Vector3 pos = transform.position;
+        float r = transform.localScale.x * 0.5f;
+        bool nearLeft  = pos.x < -WALL_INNER + r * 2f;
+        bool nearRight = pos.x >  WALL_INNER - r * 2f;
+        bool nearTop   = pos.y >  CEILING_Y  - r * 2f;
+
+        if ((nearLeft || nearRight) && nearTop)
+        {
+            // Definitely in a corner – kick downward
+            float dirX = nearLeft ? 0.4f : -0.4f;
+            rb.velocity = new Vector3(dirX, -0.9f, 0f).normalized * initialSpeed;
+            stuckTimer  = 0f;
+        }
+
+        // ── 4. STUCK RESCUE ──────────────────────────────
+        if (Mathf.Abs(pos.y - lastY) < 0.04f)
         {
             stuckTimer += Time.fixedDeltaTime;
             if (stuckTimer >= STUCK_TIME)
             {
-                Debug.Log("[Ball] Stuck detected – relaunching upward.");
-                float rx = Random.Range(-0.5f, 0.5f);
+                float rx = Random.Range(-0.4f, 0.4f);
                 rb.velocity = new Vector3(rx, 1f, 0f).normalized * initialSpeed;
-                stuckTimer = 0f;
+                stuckTimer  = 0f;
             }
         }
-        else
-        {
-            stuckTimer = 0f;
-        }
-        lastY = transform.position.y;
+        else { stuckTimer = 0f; }
+        lastY = pos.y;
     }
 
     // ─────────────────────────────────────────────────────
@@ -156,44 +177,45 @@ public class BallController : MonoBehaviour
     {
         if (!isLaunched) return;
 
-        Vector3 vel     = rb.velocity;
-        Vector3 normal  = col.contacts[0].normal;
-        normal.z = 0f; // project to 2D plane
+        ContactPoint cp      = col.contacts[0];
+        Vector3 normal       = cp.normal;
+        normal.z = 0f;
+        if (normal == Vector3.zero) normal = Vector3.up;
 
-        // ── PADDLE – angle based on hit offset ──────────
+        // ── PADDLE ── custom angle based on hit position ─
         if (col.gameObject.CompareTag("Paddle"))
         {
-            float halfW = col.collider.bounds.size.x * 0.5f;
+            float halfW  = col.collider.bounds.size.x * 0.5f;
             float offset = Mathf.Clamp(
                 (transform.position.x - col.transform.position.x) / halfW,
-                -0.95f, 0.95f);
+                -0.92f, 0.92f);
 
-            // Spread from 20° (center) to 75° (edge) measured from vertical
-            float angle = Mathf.Lerp(20f, 75f, Mathf.Abs(offset)) * Mathf.Deg2Rad;
-            float dirX  = Mathf.Sin(angle) * Mathf.Sign(offset != 0 ? offset : 0.01f);
-            float dirY  = Mathf.Cos(angle);
+            // Map offset → launch angle 20°…72° from vertical
+            float angleDeg = Mathf.Lerp(20f, 72f, Mathf.Abs(offset));
+            float rad      = angleDeg * Mathf.Deg2Rad;
+            float signX    = Mathf.Sign(offset == 0f ? Random.Range(-1f,1f) : offset);
 
-            rb.velocity = new Vector3(dirX, dirY, 0f).normalized * initialSpeed;
-            GameManager.Instance?.TriggerScreenShake(0.06f, 0.1f);
-            return; // skip generic reflect
+            Vector3 dir = new Vector3(Mathf.Sin(rad) * signX, Mathf.Cos(rad), 0f);
+            rb.velocity = dir * initialSpeed;
+            moveDir     = dir;
+            GameManager.Instance?.TriggerScreenShake(0.07f, 0.09f);
+            return;
         }
 
-        // ── STANDARD REFLECT (walls, bricks, ceiling) ───
-        Vector3 reflected = Vector3.Reflect(vel, normal);
+        // ── GENERIC REFLECT ──────────────────────────────
+        Vector3 reflected = Vector3.Reflect(rb.velocity.normalized, normal.normalized);
 
-        // Safety: ensure reflected has some vertical component
-        float minY = initialSpeed * MIN_Y_FRACTION;
+        // Enforce min Y again post-reflect
+        float minY = initialSpeed * MIN_Y_FRAC;
         if (Mathf.Abs(reflected.y) < minY)
         {
-            // Add a small random nudge to break degenerate angles
-            reflected.y = (reflected.y >= 0f ? minY : -minY)
-                        + Random.Range(-0.05f, 0.05f) * initialSpeed;
+            reflected.y  = Mathf.Sign(reflected.y == 0 ? 1f : reflected.y) * minY;
+            reflected.x += Random.Range(-0.1f, 0.1f);
         }
 
-        // Tiny random jitter to break corner traps
-        reflected.x += Random.Range(-0.04f, 0.04f) * initialSpeed;
-
-        rb.velocity = reflected.normalized * initialSpeed;
+        reflected    = reflected.normalized;
+        rb.velocity  = reflected * initialSpeed;
+        moveDir      = reflected;
     }
 
     // ─────────────────────────────────────────────────────

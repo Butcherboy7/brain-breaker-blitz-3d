@@ -16,6 +16,11 @@ public class AutoSetupGame : MonoBehaviour
 
     public void SetupScene()
     {
+        // 60 FPS + physics settings
+        Application.targetFrameRate = 60;
+        Time.fixedDeltaTime         = 1f / 60f;
+        Physics.bounceThreshold     = 0f;    // essential for brick breaker
+
         // ── Camera ─────────────────────────────────────
         Camera cam = Camera.main;
         if (cam == null)
@@ -62,8 +67,17 @@ public class AutoSetupGame : MonoBehaviour
             padGO.name = "Paddle";
             padGO.tag  = "Paddle";
         }
-        padGO.transform.localScale = new Vector3(2.8f, 0.4f, 0.4f);
+        padGO.transform.localScale = new Vector3(2.8f, 0.4f, 0.6f);
         padGO.transform.position   = new Vector3(0, -4.5f, 0);
+
+        // Bouncy paddle collider
+        var padPM = new PhysicMaterial("PaddlePM")
+        {
+            bounciness = 1f, dynamicFriction = 0f, staticFriction = 0f,
+            frictionCombine = PhysicMaterialCombine.Minimum,
+            bounceCombine   = PhysicMaterialCombine.Maximum,
+        };
+        padGO.GetComponent<BoxCollider>().material = padPM;
         PaddleController pc = padGO.GetComponent<PaddleController>() ?? padGO.AddComponent<PaddleController>();
         gm.paddle = pc;
 
@@ -97,9 +111,12 @@ public class AutoSetupGame : MonoBehaviour
         var dzc = dz.AddComponent<BoxCollider>();
         dzc.isTrigger = true;
 
-        // ── Remove old walls so they get recreated fresh ─
+        // ── Remove old walls – LevelManager will recreate correctly ─
         foreach (var wn in new[]{ "WallLeft","WallRight","WallTop" })
-            DestroyImmediate(GameObject.Find(wn));
+        {
+            var w = GameObject.Find(wn);
+            if (w) DestroyImmediate(w);
+        }
 
         Debug.Log("✅ Setup complete! Press PLAY.");
     }
