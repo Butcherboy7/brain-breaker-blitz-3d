@@ -13,83 +13,98 @@ public class AutoSetupGame : MonoBehaviour
 
     public void SetupScene()
     {
-        // 1. Setup Camera
+        // ----- Camera -----
         Camera cam = Camera.main;
         if (cam == null)
         {
-            GameObject camObj = new GameObject("Main Camera");
-            cam = camObj.AddComponent<Camera>();
+            var camObj = new GameObject("Main Camera"); 
+            cam = camObj.AddComponent<Camera>(); 
             camObj.tag = "MainCamera";
         }
-        cam.transform.position = new Vector3(0, 0, -10);
-        cam.transform.rotation = Quaternion.Euler(0, 0, 0);
+        cam.transform.position = new Vector3(0, 1, -13);
+        cam.transform.rotation = Quaternion.Euler(10, 0, 0);
+        cam.backgroundColor = new Color(0.05f, 0.05f, 0.12f);
+        cam.clearFlags = CameraClearFlags.SolidColor;
 
-        // 2. Setup Light
+        // ----- Lighting -----
         if (GameObject.Find("Directional Light") == null)
         {
-            GameObject lightObj = new GameObject("Directional Light");
-            Light light = lightObj.AddComponent<Light>();
-            light.type = LightType.Directional;
-            lightObj.transform.rotation = Quaternion.Euler(50, -30, 0);
+            var lightObj = new GameObject("Directional Light");
+            Light l = lightObj.AddComponent<Light>();
+            l.type = LightType.Directional;
+            l.color = new Color(0.8f, 0.8f, 1f);
+            l.intensity = 1.2f;
+            lightObj.transform.rotation = Quaternion.Euler(45, -60, 0);
         }
 
-        // 3. Setup Managers
-        GameObject gmObj = GameObject.Find("GameManager");
-        if (gmObj == null) gmObj = new GameObject("GameManager");
+        // ----- GameManager -----
+        var gmObj = GameObject.Find("GameManager") ?? new GameObject("GameManager");
         GameManager gm = gmObj.GetComponent<GameManager>() ?? gmObj.AddComponent<GameManager>();
 
-        GameObject lmObj = GameObject.Find("LevelManager");
-        if (lmObj == null) lmObj = new GameObject("LevelManager");
+        // ----- LevelManager -----
+        var lmObj = GameObject.Find("LevelManager") ?? new GameObject("LevelManager");
         LevelManager lm = lmObj.GetComponent<LevelManager>() ?? lmObj.AddComponent<LevelManager>();
-        
         if (lm.brickContainer == null)
         {
-            GameObject container = new GameObject("BrickContainer");
-            lm.brickContainer = container.transform;
+            lm.brickContainer = new GameObject("BrickContainer").transform;
         }
         lm.brickPrefab = brickPrefab;
 
-        // 4. Setup Paddle
-        GameObject paddleObj = GameObject.Find("Paddle");
+        // ----- Paddle -----
+        var paddleObj = GameObject.Find("Paddle");
         if (paddleObj == null)
         {
             paddleObj = GameObject.CreatePrimitive(PrimitiveType.Cube);
             paddleObj.name = "Paddle";
             paddleObj.tag = "Paddle";
         }
-        paddleObj.transform.localScale = new Vector3(2, 0.5f, 0.5f);
+        paddleObj.transform.localScale = new Vector3(2.8f, 0.45f, 0.45f);
+        paddleObj.transform.position = new Vector3(0, -4.5f, 0);
         PaddleController pc = paddleObj.GetComponent<PaddleController>() ?? paddleObj.AddComponent<PaddleController>();
         gm.paddle = pc;
 
-        // 5. Setup Ball
-        GameObject ballObj = GameObject.Find("Ball");
+        // ----- Ball -----
+        var ballObj = GameObject.Find("Ball");
         if (ballObj == null)
         {
             ballObj = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             ballObj.name = "Ball";
             ballObj.tag = "Ball";
         }
-        ballObj.transform.localScale = new Vector3(0.4f, 0.4f, 0.4f);
-        Rigidbody rb = ballObj.GetComponent<Rigidbody>() ?? ballObj.AddComponent<Rigidbody>();
+        ballObj.transform.localScale = Vector3.one * 0.5f;
+        ballObj.transform.position = new Vector3(0, -3.5f, 0);
+
+        Rigidbody rb = ballObj.GetComponent<Rigidbody>();
+        if (rb == null) rb = ballObj.AddComponent<Rigidbody>();
         rb.useGravity = false;
         rb.constraints = RigidbodyConstraints.FreezePositionZ | RigidbodyConstraints.FreezeRotation;
+        rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
+        rb.interpolation = RigidbodyInterpolation.Interpolate;
+
+        PhysicMaterial ballPhysics = new PhysicMaterial("BallBounce");
+        ballPhysics.bounciness = 1f;
+        ballPhysics.frictionCombine = PhysicMaterialCombine.Minimum;
+        ballPhysics.bounceCombine = PhysicMaterialCombine.Maximum;
+        ballObj.GetComponent<SphereCollider>().material = ballPhysics;
+
         BallController bc = ballObj.GetComponent<BallController>() ?? ballObj.AddComponent<BallController>();
         gm.ball = bc;
 
-        // 6. Setup DeadZone
-        GameObject dzObj = GameObject.Find("DeadZone");
+        // ----- DeadZone -----
+        var dzObj = GameObject.Find("DeadZone");
         if (dzObj == null)
         {
             dzObj = GameObject.CreatePrimitive(PrimitiveType.Cube);
             dzObj.name = "DeadZone";
             dzObj.tag = "DeadZone";
-            dzObj.transform.position = new Vector3(0, -6, 0);
-            dzObj.transform.localScale = new Vector3(30, 1, 1);
-            dzObj.GetComponent<MeshRenderer>().enabled = false;
-            dzObj.GetComponent<BoxCollider>().isTrigger = true;
         }
+        dzObj.transform.position = new Vector3(0, -6.5f, 0);
+        dzObj.transform.localScale = new Vector3(30, 1, 5);
+        dzObj.GetComponent<MeshRenderer>().enabled = false;
+        var dzCol = dzObj.GetComponent<BoxCollider>();
+        dzCol.isTrigger = true;
 
-        Debug.Log("Scene Setup Complete! Just add a UI Canvas and click Start Game.");
+        Debug.Log("✅ Auto-Setup Complete. Click PLAY!");
     }
 }
 
@@ -100,10 +115,9 @@ public class AutoSetupEditor : Editor
     public override void OnInspectorGUI()
     {
         DrawDefaultInspector();
-        AutoSetupGame myScript = (AutoSetupGame)target;
-        if (GUILayout.Button("AUTO SETUP SCENE"))
+        if (GUILayout.Button("🚀 AUTO SETUP SCENE", GUILayout.Height(40)))
         {
-            myScript.SetupScene();
+            ((AutoSetupGame)target).SetupScene();
         }
     }
 }
