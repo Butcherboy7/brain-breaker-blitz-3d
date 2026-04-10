@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.EventSystems;
 
 public class GameManager : MonoBehaviour
 {
@@ -56,6 +57,14 @@ public class GameManager : MonoBehaviour
     // ═══════════════════════════════════════════════════
     void BuildHUD()
     {
+        // ── EventSystem (REQUIRED for button clicks to work) ──
+        if (FindObjectOfType<EventSystem>() == null)
+        {
+            GameObject esObj = new GameObject("EventSystem");
+            esObj.AddComponent<EventSystem>();
+            esObj.AddComponent<StandaloneInputModule>();
+        }
+
         // Root canvas
         GameObject cvObj = new GameObject("HUD");
         Canvas cv = cvObj.AddComponent<Canvas>();
@@ -107,13 +116,23 @@ public class GameManager : MonoBehaviour
 
         string[] labels = { "BEGINNER  |  IQ 80", "AVERAGE  |  IQ 100", "SMART  |  IQ 120", "GENIUS  |  IQ 140", "MASTERMIND  |  IQ 160+" };
         Color[] btnCols = { Color.green, Color.cyan, Color.yellow, new Color(1f, 0.5f, 0f), Color.magenta };
-        for (int i = 0; i < 5; i++)
+
+        // FIX: capture iq in a local copy inside the loop to avoid C# closure bug
+        CreateLevelButton(levelSelectPanel.transform, 1, labels[0], btnCols[0], 90f);
+        CreateLevelButton(levelSelectPanel.transform, 2, labels[1], btnCols[1], 30f);
+        CreateLevelButton(levelSelectPanel.transform, 3, labels[2], btnCols[2], -30f);
+        CreateLevelButton(levelSelectPanel.transform, 4, labels[3], btnCols[3], -90f);
+        CreateLevelButton(levelSelectPanel.transform, 5, labels[4], btnCols[4], -150f);
+    }
+
+    void CreateLevelButton(Transform parent, int iq, string label, Color col, float y)
+    {
+        Color bg = new Color(col.r * 0.25f, col.g * 0.25f, col.b * 0.25f, 0.9f);
+        UIButton(parent, new Vector2(0, y), new Vector2(420, 50), label, bg, () =>
         {
-            int iq = i + 1;
-            float y = 90f - i * 60f;
-            Color bc = new Color(btnCols[i].r * 0.25f, btnCols[i].g * 0.25f, btnCols[i].b * 0.25f, 0.9f);
-            UIButton(levelSelectPanel.transform, new Vector2(0, y), new Vector2(420, 50), labels[i], bc, () => { levelSelectPanel.SetActive(false); StartGame(iq); }, btnCols[iq - 1]);
-        }
+            levelSelectPanel.SetActive(false);
+            StartGame(iq);
+        }, col);
     }
 
     // ═══════════════════════════════════════════════════
