@@ -4,16 +4,11 @@ using UnityEngine;
 
 public class BallController : MonoBehaviour
 {
-    [Header("Physics")]
     public Rigidbody rb;
     public float initialSpeed = 10f;
     public bool isLaunched = false;
 
-    [Header("Trail")]
     private TrailRenderer trail;
-
-    [Header("Spin")]
-    private Vector3 lastPaddleHitNormal;
 
     void Awake()
     {
@@ -24,45 +19,39 @@ public class BallController : MonoBehaviour
         rb.constraints = RigidbodyConstraints.FreezePositionZ | RigidbodyConstraints.FreezeRotation;
         rb.interpolation = RigidbodyInterpolation.Interpolate;
 
-        // Add a trail renderer
-        trail = GetComponent<TrailRenderer>();
-        if (trail == null) trail = gameObject.AddComponent<TrailRenderer>();
-        trail.time = 0.2f;
-        trail.startWidth = 0.3f;
-        trail.endWidth = 0f;
-        trail.material = new Material(Shader.Find("Sprites/Default"));
-        Gradient g = new Gradient();
-        g.SetKeys(
-            new GradientColorKey[] { new GradientColorKey(Color.yellow, 0f), new GradientColorKey(Color.red, 1f) },
-            new GradientAlphaKey[] { new GradientAlphaKey(1f, 0f), new GradientAlphaKey(0f, 1f) }
-        );
-        trail.colorGradient = g;
+        // Bouncy physics material
+        PhysicMaterial pm = new PhysicMaterial("BallBounce");
+        pm.bounciness = 1f;
+        pm.frictionCombine = PhysicMaterialCombine.Minimum;
+        pm.bounceCombine  = PhysicMaterialCombine.Maximum;
+        GetComponent<SphereCollider>().material = pm;
 
-        ApplyGlowMaterial(Color.yellow);
-    }
-
-    void ApplyGlowMaterial(Color col)
-    {
-        MeshRenderer ren = GetComponent<MeshRenderer>();
-        if (ren == null) return;
-        Material mat = new Material(Shader.Find("Standard"));
-        mat.color = col;
+        // Glow material
+        var mat = new Material(Shader.Find("Standard"));
+        mat.color = new Color(1f, 0.9f, 0.1f);
         mat.EnableKeyword("_EMISSION");
-        mat.SetColor("_EmissionColor", col * 2f);
-        ren.material = mat;
+        mat.SetColor("_EmissionColor", new Color(1f, 0.5f, 0f) * 2f);
+        GetComponent<MeshRenderer>().material = mat;
+
+        // Trail
+        trail = gameObject.AddComponent<TrailRenderer>();
+        trail.time = 0.18f;
+        trail.startWidth = 0.3f;
+        trail.endWidth   = 0f;
+        trail.material   = new Material(Shader.Find("Sprites/Default"));
+        var grad = new Gradient();
+        grad.SetKeys(
+            new GradientColorKey[] { new GradientColorKey(Color.yellow, 0), new GradientColorKey(Color.red, 1) },
+            new GradientAlphaKey[] { new GradientAlphaKey(1, 0), new GradientAlphaKey(0, 1) });
+        trail.colorGradient = grad;
     }
 
     public void ResetBall(float speed)
     {
         initialSpeed = speed;
+        isLaunched   = false;
         transform.position = new Vector3(0, -3.5f, 0);
-        if (rb == null) rb = GetComponent<Rigidbody>();
-        if (rb != null)
-        {
-            rb.velocity = Vector3.zero;
-            rb.angularVelocity = Vector3.zero;
-        }
-        isLaunched = false;
+        if (rb) { rb.velocity = Vector3.zero; rb.angularVelocity = Vector3.zero; }
     }
 
     void Update()
@@ -70,53 +59,46 @@ public class BallController : MonoBehaviour
         if (!isLaunched && GameManager.Instance != null && GameManager.Instance.isPlaying)
         {
             if (Input.GetKeyDown(KeyCode.Space) || Input.GetMouseButtonDown(0))
-            {
                 Launch();
-            }
         }
     }
 
     void Launch()
     {
         isLaunched = true;
-        float randX = Random.Range(-0.4f, 0.4f);
-        Vector3 launchDir = new Vector3(randX, 1, 0).normalized;
-        rb.velocity = launchDir * initialSpeed;
+        Vector3 dir = new Vector3(Random.Range(-0.35f, 0.35f), 1f, 0).normalized;
+        rb.velocity = dir * initialSpeed;
     }
 
-    private void OnCollisionEnter(Collision collision)
+    void OnCollisionEnter(Collision col)
     {
-        if (collision.gameObject.CompareTag("Paddle"))
+        if (col.gameObject.CompareTag("Paddle"))
         {
-            // Add spin based on hit position for skill-based play
-            float hitOffset = (transform.position.x - collision.transform.position.x) / (collision.collider.bounds.size.x / 2f);
-            hitOffset = Mathf.Clamp(hitOffset, -1f, 1f);
-            Vector3 dir = new Vector3(hitOffset * 0.8f, 1, 0).normalized;
+            float offset = (transform.position.x - col.transform.position.x)
+                         / (col.collider.bounds.size.x * 0.5f);
+            offset = Mathf.Clamp(offset, -0.95f, 0.95f);
+            Vector3 dir = new Vector3(offset, 1f - Mathf.Abs(offset) * 0.2f, 0).normalized;
             rb.velocity = dir * initialSpeed;
-            // Screen shake
-            GameManager.Instance.TriggerScreenShake(0.05f, 0.1f);
+            if (GameManager.Instance) GameManager.Instance.TriggerScreenShake(0.05f, 0.08f);
         }
 
-        // Speed lock
-        if (isLaunched)
-        {
-            StartCoroutine(LockSpeed());
-        }
+        // enforce constant speed one frame later
+        StartCoroutine(LockSpeed());
     }
 
-    private void OnTriggerEnter(Collider other)
+    void OnTriggerEnter(Collider other)
     {
         if (other.CompareTag("DeadZone"))
         {
             isLaunched = false;
-            GameManager.Instance.LoseLife();
+            if (GameManager.Instance) GameManager.Instance.LoseLife();
         }
     }
 
     IEnumerator LockSpeed()
     {
         yield return new WaitForFixedUpdate();
-        if (rb != null && rb.velocity.magnitude > 0.1f)
+        if (rb && rb.velocity.sqrMagnitude > 0.01f)
             rb.velocity = rb.velocity.normalized * initialSpeed;
     }
 }

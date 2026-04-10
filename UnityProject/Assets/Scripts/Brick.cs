@@ -4,127 +4,86 @@ using UnityEngine;
 
 public class Brick : MonoBehaviour
 {
-    [Header("Stats")]
-    public int health = 1;
-    public int maxHealth = 1;
-    public bool isBonus = false;
-    public string bonusType = "";
-
-    [Header("Visual")]
-    public MeshRenderer meshRenderer;
+    public int health;
+    public int maxHealth;
+    public bool isBonus;
+    public string bonusType;
     private Color baseColor;
     private Material mat;
 
-    // Particle burst on destroy
-    public GameObject explosionPrefab; 
-
-    public void Initialize(int h, bool bonus, Color color, string bonusT = "")
+    public void Initialize(int h, bool bonus, Color color, string bt = "")
     {
-        health = h;
-        maxHealth = h;
-        isBonus = bonus;
-        bonusType = bonusT;
+        health = h; maxHealth = h;
+        isBonus = bonus; bonusType = bt;
         baseColor = color;
 
-        meshRenderer = GetComponent<MeshRenderer>();
         mat = new Material(Shader.Find("Standard"));
         mat.color = color;
-
-        if (isBonus)
-        {
-            mat.EnableKeyword("_EMISSION");
-            mat.SetColor("_EmissionColor", color * 3f);
-        }
-        else
-        {
-            mat.EnableKeyword("_EMISSION");
-            mat.SetColor("_EmissionColor", color * 0.4f);
-        }
-
-        meshRenderer.material = mat;
-        UpdateHealthVisual();
+        mat.EnableKeyword("_EMISSION");
+        mat.SetColor("_EmissionColor", color * (isBonus ? 3f : 0.5f));
+        GetComponent<MeshRenderer>().material = mat;
+        UpdateVisual();
     }
 
-    private void OnCollisionEnter(Collision col)
+    void OnCollisionEnter(Collision col)
     {
-        if (col.gameObject.CompareTag("Ball"))
-        {
-            TakeDamage(1);
-        }
+        if (col.gameObject.CompareTag("Ball")) Hit();
     }
 
-    void TakeDamage(int damage)
+    void Hit()
     {
-        health -= damage;
-        if (health <= 0)
-        {
-            Die();
-        }
-        else
-        {
-            UpdateHealthVisual();
-            StartCoroutine(HitFlash());
-        }
+        health--;
+        if (health <= 0) Die();
+        else { UpdateVisual(); StartCoroutine(Flash()); }
     }
 
-    void UpdateHealthVisual()
+    void UpdateVisual()
     {
         if (maxHealth <= 1) return;
-        float healthPct = (float)health / maxHealth;
-        // Shift color from original to dark-red as health drops
-        Color damaged = Color.Lerp(Color.red * 0.5f, baseColor, healthPct);
-        mat.color = damaged;
-        mat.SetColor("_EmissionColor", damaged * (0.4f + healthPct * 0.6f));
-        // Scale down slightly as damaged
-        transform.localScale = new Vector3(1f, Mathf.Lerp(0.3f, 0.5f, healthPct), 0.5f);
+        float pct = (float)health / maxHealth;
+        Color c = Color.Lerp(new Color(0.6f, 0f, 0f), baseColor, pct);
+        mat.color = c;
+        mat.SetColor("_EmissionColor", c * (0.3f + pct * 0.7f));
+        transform.localScale = new Vector3(
+            transform.localScale.x,
+            Mathf.Lerp(0.30f, 0.5f, pct),
+            transform.localScale.z);
     }
 
-    IEnumerator HitFlash()
+    IEnumerator Flash()
     {
         mat.color = Color.white;
         yield return new WaitForSeconds(0.05f);
-        UpdateHealthVisual();
+        UpdateVisual();
     }
 
     void Die()
     {
-        SpawnExplosion();
-
-        if (isBonus && !string.IsNullOrEmpty(bonusType))
-        {
+        Explode();
+        if (isBonus && bonusType != "" && GameManager.Instance)
             GameManager.Instance.ApplyPowerUp(bonusType);
-        }
-
-        int pts = isBonus ? 50 : (10 * maxHealth);
-        GameManager.Instance.AddScore(pts, transform.position);
-
+        if (GameManager.Instance)
+            GameManager.Instance.AddScore(isBonus ? 50 : 10 * maxHealth, transform.position);
         Destroy(gameObject);
     }
 
-    void SpawnExplosion()
+    void Explode()
     {
-        // Spawn particles procedurally
-        for (int i = 0; i < 12; i++)
+        for (int i = 0; i < 14; i++)
         {
-            GameObject particle = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            Destroy(particle.GetComponent<BoxCollider>());
-            particle.transform.position = transform.position;
-            particle.transform.localScale = Vector3.one * Random.Range(0.05f, 0.15f);
-            MeshRenderer ren = particle.GetComponent<MeshRenderer>();
-            Material pMat = new Material(Shader.Find("Standard"));
-            pMat.color = baseColor;
-            pMat.EnableKeyword("_EMISSION");
-            pMat.SetColor("_EmissionColor", baseColor * 2f);
-            ren.material = pMat;
-
-            Rigidbody prb = particle.AddComponent<Rigidbody>();
-            prb.useGravity = true;
-            prb.velocity = new Vector3(
-                Random.Range(-5f, 5f),
-                Random.Range(2f, 8f),
-                Random.Range(-2f, 2f)
-            );
-            Destroy(particle, 1f);
+            var p = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            Destroy(p.GetComponent<BoxCollider>());
+            p.transform.position = transform.position;
+            p.transform.localScale = Vector3.one * Random.Range(0.05f, 0.18f);
+            var pm = new Material(Shader.Find("Standard"));
+            pm.color = baseColor;
+            pm.EnableKeyword("_EMISSION");
+            pm.SetColor("_EmissionColor", baseColor * 2.5f);
+            p.GetComponent<MeshRenderer>().material = pm;
+            Rigidbody prb = p.AddComponent<Rigidbody>();
+            prb.velocity = new Vector3(Random.Range(-6f, 6f), Random.Range(3f, 9f), Random.Range(-3f, 3f));
+            prb.angularVelocity = Random.insideUnitSphere * 10f;
+            Destroy(p, 1.2f);
         }
     }
 }
