@@ -1,109 +1,157 @@
+using System.Collections;
 using UnityEngine;
 
 /// <summary>
-/// Smooth paddle controller.
-/// - Input read in Update() every frame (holding keys works perfectly)
-/// - Movement applied via rb.MovePosition() in FixedUpdate (proper physics)
-/// - Lerp smoothing gives buttery, responsive feel
-/// - Clamps to wall inner edges accounting for paddle half-width
+/// PaddleController — Heavy Robustness Fix.
+/// Removed Rigidbody-based smoothing to prevent desync glitches.
+/// Uses direct transform updates for 100% reliable side-to-side movement.
 /// </summary>
-[RequireComponent(typeof(Rigidbody))]
-[RequireComponent(typeof(BoxCollider))]
 public class PaddleController : MonoBehaviour
 {
-    const float WALL_INNER = 8.5f; // must match LevelManager
+    private const float WALL_INNER = 8.51f;
 
     [Header("Movement")]
-    public float speed        = 22f;   // world units per second
-    public float smoothing    = 12f;   // higher = snappier, lower = more floaty
+    public float speed        = 22f;
     public float currentWidth = 3.2f;
 
+    [Header("Visual Juice")]
+    [SerializeField] private float maxTiltAngle  = 12f;
+    [SerializeField] private float tiltSpeed     = 12f;
+    [SerializeField] private float pulseScale    = 1.15f;
+    [SerializeField] private float pulseDecay    = 8f;
+
+    // ── Internal ──────────────────────────────────────────────
+    private Material  mat;
+    private Light     underLight;
+    private float     currentX;
+    private float     inputH;
+    private float     currentTilt;
+    private float     scaleMultiplier = 1f;
+    private Vector3   baseScale;
+    private float     hueShift;
+    private float     energyGlow;
     private Rigidbody rb;
-    private float targetX;     // updated every Update frame
-    private float currentX;    // smoothly chased toward targetX
 
     // ─────────────────────────────────────────────────────────
     void Awake()
     {
-        Application.targetFrameRate = 60;
-        Time.fixedDeltaTime         = 1f / 60f;
-
         rb = GetComponent<Rigidbody>();
-        rb.useGravity    = false;
-        rb.isKinematic   = true;
-        rb.interpolation = RigidbodyInterpolation.Interpolate; // visual smoothness
+        if (rb) { rb.isKinematic = true; rb.useGravity = false; }
 
-        var pm = new PhysicMaterial("PaddlePM")
-        {
-            bounciness      = 1f,
-            dynamicFriction = 0f,
-            staticFriction  = 0f,
-            frictionCombine = PhysicMaterialCombine.Minimum,
-            bounceCombine   = PhysicMaterialCombine.Maximum,
-        };
-        GetComponent<BoxCollider>().material = pm;
-
-        ApplyGlow();
-        targetX  = transform.position.x;
+        baseScale = transform.localScale;
+        ApplyMaterial();
+        SetupUnderglow();
         currentX = transform.position.x;
     }
 
-    void ApplyGlow()
+    void ApplyMaterial()
     {
-        var mat = new Material(Shader.Find("Standard"));
-        mat.color = new Color(0f, 1f, 0.6f);
+        mat = new Material(Shader.Find("Standard"));
+        mat.color = new Color(0.2f, 0.8f, 1f, 0.5f);
         mat.EnableKeyword("_EMISSION");
-        mat.SetColor("_EmissionColor", new Color(0f, 1f, 0.6f) * 2.5f);
+        mat.SetColor("_EmissionColor", NeonVisuals.NeonCyan * 1.5f);
         GetComponent<MeshRenderer>().material = mat;
     }
 
+    void SetupUnderglow()
+    {
+        var lightGO = new GameObject("PaddleUnderglow");
+        lightGO.transform.SetParent(transform);
+        lightGO.transform.localPosition = new Vector3(0f, -0.4f, 0f);
+        underLight = lightGO.AddComponent<Light>();
+        underLight.type = LightType.Point;
+        underLight.color = NeonVisuals.NeonCyan;
+        underLight.range = 5f;
+        underLight.intensity = 3f;
+    }
+
     // ─────────────────────────────────────────────────────────
-    // Update: read input EVERY frame (ensures holding keys works)
     void Update()
     {
-        float h = 0f;
-        if (Input.GetKey(KeyCode.LeftArrow)  || Input.GetKey(KeyCode.A)) h = -1f;
-        if (Input.GetKey(KeyCode.RightArrow) || Input.GetKey(KeyCode.D)) h =  1f;
-        // Analogue gamepad / keyboard axis combo
-        float axis = Input.GetAxisRaw("Horizontal");
-        if (h == 0f && Mathf.Abs(axis) > 0.1f) h = Mathf.Sign(axis);
-
-        float halfW = currentWidth * 0.5f;
-        float maxX  = WALL_INNER - halfW - 0.05f;
-
-        // Accumulate desired position
-        targetX += h * speed * Time.deltaTime;
-        targetX  = Mathf.Clamp(targetX, -maxX, maxX);
+        // 1. Move even if paused or during countdown
+        HandleMovement();
+        
+        // 2. Visuals
+        AnimateTilt();
+        AnimateHolographic();
+        AnimateEnergyField();
+        AnimatePulseDecay();
     }
 
-    // ─────────────────────────────────────────────────────────
-    // FixedUpdate: smooth chase + physics move (looks silky smooth)
-    void FixedUpdate()
+    void HandleMovement()
     {
-        // Smoothly interpolate currentX toward targetX
-        currentX = Mathf.Lerp(currentX, targetX, smoothing * Time.fixedDeltaTime);
+        if (GameManager.Instance != null && GameManager.Instance.isPaused) return;
 
-        Vector3 newPos = transform.position;
-        newPos.x = currentX;
-        rb.MovePosition(newPos);  // proper kinematic move — collision-aware
+        inputH = 0f;
+        if (Input.GetKey(KeyCode.LeftArrow)  || Input.GetKey(KeyCode.A)) inputH = -1f;
+        if (Input.GetKey(KeyCode.RightArrow) || Input.GetKey(KeyCode.D)) inputH =  1f;
+        
+        float axis = Input.GetAxisRaw("Horizontal");
+        if (inputH == 0f && Mathf.Abs(axis) > 0.1f) inputH = Mathf.Sign(axis);
+
+        // Move currentX
+        float dt = Time.unscaledDeltaTime; // Use unscaled to ensure it moves always
+        currentX += inputH * speed * dt;
+
+        // Clamp
+        float halfW = currentWidth * 0.5f;
+        float limit = WALL_INNER - halfW;
+        currentX = Mathf.Clamp(currentX, -limit, limit);
+
+        // Apply Position directly
+        transform.position = new Vector3(currentX, transform.position.y, 0f);
+        if (rb) rb.position = transform.position; // Sync physics
     }
 
-    // ─────────────────────────────────────────────────────────
+    void AnimateTilt()
+    {
+        float targetTilt = -inputH * maxTiltAngle;
+        currentTilt = Mathf.Lerp(currentTilt, targetTilt, tiltSpeed * Time.unscaledDeltaTime);
+        transform.rotation = Quaternion.Euler(0f, 0f, currentTilt);
+    }
+
+    void AnimateHolographic()
+    {
+        if (mat == null) return;
+        hueShift += Time.unscaledDeltaTime * 0.2f;
+        Color holo = NeonVisuals.RainbowColor(hueShift);
+        mat.SetColor("_EmissionColor", Color.Lerp(NeonVisuals.NeonCyan, holo, 0.4f) * (1.5f + energyGlow * 2f));
+        if (underLight) { underLight.color = holo; underLight.intensity = 2f + energyGlow * 3f; }
+    }
+
+    void AnimateEnergyField()
+    {
+        if (GameManager.Instance?.ball == null) { energyGlow = Mathf.Lerp(energyGlow, 0f, Time.unscaledDeltaTime * 4f); return; }
+        float dist = Mathf.Abs(GameManager.Instance.ball.transform.position.y - transform.position.y);
+        energyGlow = Mathf.Lerp(energyGlow, Mathf.Clamp01(1f - dist / 5f), Time.unscaledDeltaTime * 5f);
+    }
+
+    void AnimatePulseDecay()
+    {
+        scaleMultiplier = Mathf.Lerp(scaleMultiplier, 1f, pulseDecay * Time.unscaledDeltaTime);
+        transform.localScale = new Vector3(baseScale.x * scaleMultiplier, baseScale.y * (2f - scaleMultiplier), baseScale.z);
+    }
+
+    public void OnBallHit()
+    {
+        scaleMultiplier = pulseScale;
+        AudioManager.Instance?.PlayPaddleBounce();
+        if (underLight) underLight.intensity = 12f;
+    }
+
     public void SetWidth(float w)
     {
         currentWidth = w;
-        var s = transform.localScale;
-        s.x = w;
-        transform.localScale = s;
-        // Re-clamp targetX with new width
-        float maxX = WALL_INNER - (w * 0.5f) - 0.05f;
-        targetX = Mathf.Clamp(targetX, -maxX, maxX);
+        baseScale = new Vector3(w, baseScale.y, baseScale.z);
     }
 
     public void ResetPaddle()
     {
-        transform.position = new Vector3(0f, -4.5f, 0f);
-        targetX  = 0f;
         currentX = 0f;
+        inputH = 0f;
+        transform.position = new Vector3(0f, -4.5f, 0f);
+        transform.rotation = Quaternion.identity;
+        transform.localScale = baseScale;
+        if (rb) { rb.velocity = Vector3.zero; rb.position = transform.position; }
     }
 }
