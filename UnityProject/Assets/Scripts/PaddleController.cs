@@ -1,14 +1,14 @@
 using UnityEngine;
 
 /// <summary>
-/// Paddle controller – smooth movement, correctly clamped to inner wall edges,
-/// bouncy physics material so ball reflects cleanly off it.
+/// Paddle controller - uses direct KeyCode input (no Input Manager dependency),
+/// clamps correctly to wall inner edges accounting for paddle half-width.
 /// </summary>
 [RequireComponent(typeof(Rigidbody))]
+[RequireComponent(typeof(BoxCollider))]
 public class PaddleController : MonoBehaviour
 {
-    // Wall inner-edge is at 8.5 (see LevelManager.WALL_X).
-    // Paddle half-width is subtracted so the paddle never overlaps the wall.
+    // Must match LevelManager.WALL_X = 8.5
     const float WALL_INNER = 8.5f;
 
     public float speed        = 18f;
@@ -19,13 +19,12 @@ public class PaddleController : MonoBehaviour
     void Awake()
     {
         rb = GetComponent<Rigidbody>();
-        if (rb == null) rb = gameObject.AddComponent<Rigidbody>();
-        rb.useGravity  = false;
-        rb.isKinematic = true;
+        rb.useGravity    = false;
+        rb.isKinematic   = true;
         rb.interpolation = RigidbodyInterpolation.Interpolate;
 
-        // Bouncy physics material (ball reflects cleanly)
-        var pm = new PhysicMaterial("PaddleBounce")
+        // Bouncy physics material
+        var pm = new PhysicMaterial("PaddlePM")
         {
             bounciness      = 1f,
             dynamicFriction = 0f,
@@ -49,18 +48,24 @@ public class PaddleController : MonoBehaviour
 
     void Update()
     {
-        if (GameManager.Instance == null || !GameManager.Instance.isPlaying) return;
+        // ── Detect input directly from keys – no Input Manager required ──
+        float h = 0f;
 
-        float h = Input.GetAxis("Horizontal");
-        Vector3 p = transform.position;
+        // Arrow keys
+        if (Input.GetKey(KeyCode.LeftArrow)  || Input.GetKey(KeyCode.A)) h = -1f;
+        if (Input.GetKey(KeyCode.RightArrow) || Input.GetKey(KeyCode.D)) h =  1f;
 
-        // Half-width of the paddle in world units
+        // Also support GetAxis as fallback (joystick / other input)
+        if (h == 0f) h = Input.GetAxisRaw("Horizontal");
+
+        if (h == 0f) return; // nothing pressed
+
+        Vector3 pos = transform.position;
         float halfW = currentWidth * 0.5f;
+        float maxX  = WALL_INNER - halfW - 0.05f; // tiny margin so paddle never overlaps wall
 
-        // Clamp so paddle edges never go past wall inner face
-        float maxX = WALL_INNER - halfW;
-        p.x = Mathf.Clamp(p.x + h * speed * Time.deltaTime, -maxX, maxX);
-        transform.position = p;
+        pos.x = Mathf.Clamp(pos.x + h * speed * Time.deltaTime, -maxX, maxX);
+        transform.position = pos;
     }
 
     public void SetWidth(float w)
