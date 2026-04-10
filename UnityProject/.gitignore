@@ -1,0 +1,44 @@
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]serSettings/
+
+# MemoryCaptures can get huge
+/[Mm]emoryCaptures/
+
+# Asset Import Settings Overrides
+/[Aa]ssets/[Aa]ddressableAssetsData/*/*.editdata
+
+# Exported VS Solution
+/*.sln
+/*.csproj
+/*.unityproj
+/*.suo
+/*.tmp
+/*.user
+/*.userprefs
+/*.pidb
+/*.booproj
+/*.svd
+/*.pdb
+/*.opendb
+/*.IDB
+/*.VC.db
+
+# Unity3D generated meta files
+/*.pidb.meta
+/*.pdb.meta
+/*.metadata
+
+# Unity3D Generated File On Crash Reports
+sysinfo.txt
+
+# Whirligig logs
+/Whirligig
+
+# Builds
+*.apk
+*.unitypackage
